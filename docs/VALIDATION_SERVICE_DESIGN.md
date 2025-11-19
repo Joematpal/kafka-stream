@@ -167,33 +167,67 @@ CREATE TABLE data_quality_results (
 6. **Performance**: Strategic indexes for common query patterns
 7. **System Tracking**: Instance ID and processing metrics
 
-## Validation Rule Engine
+## Validation Engine - Existing protovalidate-go Implementation
 
-### Rule Definition Structure
+### Use Existing protovalidate-go Workflow
+
+The project already implements protovalidate-go validation as shown in [`cmd/validatepb/main.go`](cmd/validatepb/main.go):
 
 ```go
-type ValidationRule struct {
-    ID          string                 `json:"id"`
-    Name        string                 `json:"name"`
-    Version     string                 `json:"version"`
-    Description string                 `json:"description"`
-    Severity    ValidationSeverity     `json:"severity"`
-    Conditions  []ValidationCondition  `json:"conditions"`
-    Actions     []ValidationAction     `json:"actions"`
-    Enabled     bool                   `json:"enabled"`
-    Tags        []string              `json:"tags"`
+// Already implemented workflow:
+// 1. Define schemas with buf.validate constraints in .proto files
+// 2. Generate descriptors using buf generate
+// 3. Load descriptors and validate messages using protovalidate-go
+
+type ValidationService struct {
+    validator   *protovalidate.Validator
+    descriptors map[string]protoreflect.FileDescriptor
 }
 
-type ValidationCondition struct {
-    Field    string      `json:"field"`
-    Operator string      `json:"operator"` // eq, ne, gt, lt, regex, exists, etc.
-    Value    interface{} `json:"value"`
-    Type     string      `json:"type"`     // string, number, boolean, array, object
+func (vs *ValidationService) ValidateKafkaMessage(topic string, jsonData []byte) error {
+    // Convert JSON to dynamic protobuf message
+    fd := vs.descriptors[topic]
+    msgDesc := fd.Messages().ByName(getMessageTypeForTopic(topic))
+    msg := dynamicpb.NewMessage(msgDesc)
+    
+    // Populate message from JSON
+    if err := protojson.Unmarshal(jsonData, msg); err != nil {
+        return fmt.Errorf("failed to unmarshal JSON: %w", err)
+    }
+    
+    // Validate using existing protovalidate-go validator
+    return vs.validator.Validate(msg)
+}
+```
+
+### Schema-Based Validation Rules
+
+Validation rules are defined in protobuf schemas using buf.validate constraints:
+
+```protobuf
+// pkg/user/v1/user.proto (already exists)
+message User {
+  string email = 1 [(buf.validate.field).string.email = true];
+  int32 age = 2 [(buf.validate.field).int32 = {gte: 0, lte: 120}];
+  string name = 3 [(buf.validate.field).string.min_len = 1];
 }
 
-type ValidationAction struct {
-    Type   string                 `json:"type"` // log, metric, store, suggest
-    Config map[string]interface{} `json:"config"`
+// For Kafka topics, define message schemas:
+message TopicAMessage {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string type = 2 [(buf.validate.field).string = {in: ["order", "payment", "notification"]}];
+  google.protobuf.Timestamp timestamp = 3 [(buf.validate.field).timestamp.gte.seconds = 1577836800]; // >= 2020-01-01
+}
+
+message EBEv11Message {
+  Address address = 1 [(buf.validate.field).required = true];
+  Transaction transaction = 2 [(buf.validate.field).required = true];
+}
+
+message Address {
+  string country = 1 [(buf.validate.field).string.len = 2]; // ISO 3166-1 alpha-2
+  string town_name = 2 [(buf.validate.field).string.min_len = 1];
+  string post_code = 3 [(buf.validate.field).string.pattern = "^[0-9]{5}(-[0-9]{4})?$"];
 }
 ```
 
