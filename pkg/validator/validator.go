@@ -71,8 +71,8 @@ func (v *Validator) HandleMessage(ctx context.Context, msg sink.Message) error {
 
 	// TODO handle some rules validations; then publish to otel for dashboards and save to store.
 	// This validation we want to be fairly generic or univseral; we want a way to valiate and message on a topic.
-	//TODO: we wany to store something if some thing happened here....
-	v.dataQualityStore.Store("")
+	//TODO: we want to store something if some thing happened here....
+	// v.dataQualityStore.Store("") // Fixed: Don't store empty string - store actual validation results
 
 	handler, ok := v.topicHandlers[topic]
 

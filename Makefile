@@ -7,4 +7,4 @@ tools:
 
 generate:
 	buf generate
-	buf build -o gen/descriptors.binpb
+	buf build -o pkg/user/v1/descriptors.binpb

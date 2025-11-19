@@ -8,7 +8,7 @@ This document outlines the design for a universal validation service that proces
 
 ### Issues Identified in Current Code
 
-1. **Logic Error in HandleMessage**: Line 102 in [`validator.go`](pkg/validator/validator.go:102) has inverted logic - returns error when handler IS found
+1. **Incomplete Data Quality Store**: Line 75 stores empty string instead of meaningful validation data
 2. **Incomplete Data Quality Store**: Line 97 stores empty string instead of meaningful data
 3. **Limited Message Source Support**: Only supports generic sink interface
 4. **No Observability**: Missing OTEL integration for metrics and tracing
