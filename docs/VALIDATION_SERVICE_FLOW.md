@@ -17,16 +17,15 @@ graph TB
     end
     
     subgraph "Validation Service Core"
-        VS[Validation Service<br/>Main Orchestrator]
-        RuleEngine[Rule Engine<br/>Dynamic Rule Processing]
-        ValidatorRegistry[Validator Registry<br/>Topic → Handler Mapping]
+        VS[Validator<br/>Main Orchestrator]
+        RuleEngine[RuleEngine<br/>Not Integrated Yet]
+        ObservableValidator[ObservableValidator<br/>OTEL Wrapper - Not Integrated]
     end
     
     subgraph "Validation Handlers"
-        GenericHandler[Generic Validator<br/>topic_a]
-        EBEHandler[EBE v11 Validator<br/>ebe_v11 topic]
-        AddressHandler[Address Validator<br/>Cross-cutting]
-        ISO20022Handler[ISO20022 Validator<br/>Address Standards]
+        TopicHandlers[Topic Handlers<br/>Topic to Handler Map]
+        EBEHandler[EBEv11MessageHandlerFunc<br/>ebe_v11 topic handler]
+        AddressHandler[FactorAddressValidator<br/>Address validation interface]
     end
     
     subgraph "Data Quality & Storage"
@@ -51,23 +50,17 @@ graph TB
     SConsumer --> MRouter
     
     MRouter --> VS
-    VS --> RuleEngine
-    VS --> ValidatorRegistry
+    VS --> TopicHandlers
     
-    ValidatorRegistry --> GenericHandler
-    ValidatorRegistry --> EBEHandler
-    
-    GenericHandler --> AddressHandler
+    TopicHandlers --> EBEHandler
     EBEHandler --> AddressHandler
-    AddressHandler --> ISO20022Handler
     
     VS --> DQEngine
     DQEngine --> DQStore
     DQStore --> ResultsAPI
     
-    VS --> OTELCollector
-    RuleEngine --> OTELCollector
-    DQEngine --> OTELCollector
+    ObservableValidator --> VS
+    ObservableValidator --> OTELCollector
     
     OTELCollector --> Prometheus
     OTELCollector --> Jaeger
@@ -75,53 +68,60 @@ graph TB
     OTELCollector --> NewRelic
 ```
 
+### Current Implementation Notes
+
+- **RuleEngine**: Exists in codebase but not integrated with main Validator
+- **ObservableValidator**: OTEL wrapper exists but not used in main validation flow
+- **DataQualityStore**: Interface exists but stores generic `any` type
+- **Integration Gap**: Components exist separately but need to be connected
+
 ## Message Processing Flow
 
 ```mermaid
 sequenceDiagram
     participant K as Kafka Topic
     participant C as Consumer
-    participant VS as Validation Service
-    participant RE as Rule Engine
-    participant VH as Validation Handler
-    participant AV as Address Validator
-    participant DQ as Data Quality Store
-    participant OTEL as OTEL Collector
-    participant G as Grafana
+    participant VS as Validator
+    participant TH as Topic Handler
+    participant AV as FactorAddressValidator
+    participant DQ as DataQualityStore
+    participant L as Logger
 
     K->>C: Message Available
     C->>VS: HandleMessage(ctx, msg)
     
-    Note over VS: Extract topic, messageID, body
-    VS->>OTEL: Start Span "validation.process_message"
-    VS->>OTEL: Counter "messages_received"
+    Note over VS: Extract topic from message
+    VS->>VS: Look up handler in topicHandlers map
     
-    VS->>RE: GetValidationRules(topic)
-    RE-->>VS: []ValidationRule
-    
-    loop For each validation rule
-        VS->>VH: ValidateMessage(rule, msg)
+    alt Handler found
+        VS->>TH: HandleMessage(ctx, msg)
         
-        alt Rule requires address validation
-            VH->>AV: ValidateAddress(addressData)
-            AV-->>VH: ValidationResult
+        alt EBE v11 topic
+            TH->>TH: Parse JSON to EBEv11 struct
+            TH->>AV: ValidateAddress(EBEv11)
+            AV-->>TH: Validation Result
+            
+            alt Address validation fails
+                TH->>L: Error("validate address", error)
+            end
+            
+            alt DataQualityStore exists
+                TH->>DQ: Store(EBEv11)
+                DQ-->>TH: Success/Error
+                
+                alt Store fails
+                    TH->>L: Error("store", error)
+                end
+            end
         end
         
-        VH-->>VS: ValidationResult
-        VS->>OTEL: Counter "validations_performed"
-        VS->>OTEL: Histogram "validation_duration"
+        TH-->>VS: Success/Error
+    else Handler not found
+        VS-->>C: Error("topic not supported")
     end
     
-    VS->>DQ: Store(DataQualityResult)
-    DQ-->>VS: Success/Error
-    
-    VS->>OTEL: End Span
-    VS->>OTEL: Gauge "data_quality_score"
-    
-    OTEL->>G: Metrics & Traces
-    
     VS-->>C: Success/Error
-    C-->>K: Commit Offset
+    C-->>K: Commit Offset (if success)
 ```
 
 ## Topic-Specific Validation Flows

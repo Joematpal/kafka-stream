@@ -9,11 +9,11 @@ This document outlines the design for a universal validation service that proces
 ### Issues Identified in Current Code
 
 1. **Incomplete Data Quality Store**: Line 75 stores empty string instead of meaningful validation data
-2. **Incomplete Data Quality Store**: Line 97 stores empty string instead of meaningful data
-3. **Limited Message Source Support**: Only supports generic sink interface
-4. **No Observability**: Missing OTEL integration for metrics and tracing
-5. **Rigid Validation Logic**: Hard-coded validation handlers without rule engine
-6. **Schema Limitations**: DataQualityResults schema lacks important fields
+2. **Limited Message Source Support**: Only supports generic sink interface
+3. **Disconnected Observability**: OTEL integration exists but not integrated in main validation flow
+4. **Unused Rule Engine**: RuleEngine struct exists but not integrated with main Validator
+5. **Schema Limitations**: DataQualityResults is defined as `any` type, lacks structure
+6. **Interface Mismatches**: Address validator interface differs between design and implementation
 
 ## Enhanced Architecture Design
 
@@ -98,9 +98,35 @@ graph TB
     OTEL --> LOGS
 ```
 
-## Enhanced Data Quality Results Schema
+## Data Quality Schema Analysis
 
-### Recommended Schema Improvements
+### Current Implementation Status
+
+The current implementation has a mismatch between design and code:
+
+```go
+// Current implementation in pkg/validator/data_quality.go
+type DataQualityResults = any  // Generic type alias - no structure
+
+// Enhanced structure exists but not integrated:
+type EnhancedDataQualityResult struct {
+    ValidationName            string             `json:"validation_name"`
+    ValidationVersion         string             `json:"validation_version"`
+    DataRecord                any                `json:"data_record"`
+    DataRecordID              string             `json:"data_record_id"`
+    DataRecordType            string             `json:"data_record_type"`
+    DataRecordSource          string             `json:"data_record_source"`
+    ValidationSeverity        ValidationSeverity `json:"validation_severity"`
+    IsValid                   bool               `json:"is_valid"`
+    MessageTopic              string             `json:"message_topic"`
+    ProcessingTimeMs          int                `json:"processing_time_ms"`
+    ValidationErrors          []string           `json:"validation_errors"`
+    ValidatedAt               time.Time          `json:"validated_at"`
+    // ... other fields
+}
+```
+
+### Recommended Schema for Production
 
 ```sql
 CREATE TABLE data_quality_results (
@@ -167,11 +193,21 @@ CREATE TABLE data_quality_results (
 6. **Performance**: Strategic indexes for common query patterns
 7. **System Tracking**: Instance ID and processing metrics
 
-## Validation Engine - Existing protovalidate-go Implementation
+## Current Implementation Analysis
 
-### Use Existing protovalidate-go Workflow
+### Existing Components
 
-The project already implements protovalidate-go validation as shown in [`cmd/validatepb/main.go`](cmd/validatepb/main.go):
+The current implementation includes these key components:
+
+1. **Validator** ([`pkg/validator/validator.go`](pkg/validator/validator.go)) - Main validation orchestrator
+2. **RuleEngine** ([`pkg/validator/rules.go`](pkg/validator/rules.go)) - Rule-based validation (not integrated)
+3. **ObservableValidator** ([`pkg/validator/observability.go`](pkg/validator/observability.go)) - OTEL wrapper (not integrated)
+4. **DataQualityStore** - Generic interface with `any` type
+5. **FactorAddressValidator** - Address validation interface
+
+### Separate protovalidate-go Implementation
+
+The project also has a separate protovalidate-go implementation in [`cmd/validatepb/main.go`](cmd/validatepb/main.go):
 
 ```go
 // Already implemented workflow:
@@ -278,9 +314,18 @@ span.SetAttributes(
 )
 ```
 
-## ISO20022 Address Validation
+## Address Validation Implementation
 
-### Enhanced Address Validator Interface
+### Current Address Validator Interface
+
+```go
+// Current implementation in pkg/validator/validator.go
+type FactorAddressValidator interface {
+    ValidateAddress(any) error
+}
+```
+
+### Recommended Enhanced Interface
 
 ```go
 type AddressValidator interface {
@@ -301,6 +346,12 @@ type ISO20022Address struct {
     Country         string `json:"country"`          // ISO 3166-1 alpha-2
 }
 ```
+
+### Migration Path
+
+1. **Current**: `FactorAddressValidator` with simple `ValidateAddress(any) error`
+2. **Target**: Enhanced interface with context, structured types, and result objects
+3. **Steps**: Gradually migrate from `any` type to structured address types
 
 ## Configuration Management
 
@@ -360,17 +411,28 @@ validation_service:
 
 ## Implementation Roadmap
 
-### Phase 1: Core Validation Service
-- [ ] Fix existing validator logic bugs
-- [ ] Implement flexible message source abstraction
-- [ ] Create rule engine foundation
-- [ ] Add basic OTEL integration
+### Current State Assessment
+- [x] Basic Validator structure with topic handlers
+- [x] RuleEngine implementation (not integrated)
+- [x] ObservableValidator with OTEL metrics (not integrated)
+- [x] Enhanced data quality structures (not integrated)
+- [x] Address validation interface (basic)
+- [ ] Integration between components
+- [ ] Proper data quality storage
+
+### Phase 1: Integration and Alignment
+- [ ] Integrate RuleEngine with main Validator
+- [ ] Integrate ObservableValidator as default wrapper
+- [ ] Replace `DataQualityResults = any` with structured type
+- [ ] Fix data quality storage (remove empty string storage)
+- [ ] Add proper error handling and logging
 
 ### Phase 2: Enhanced Validation
-- [ ] Implement ISO20022 address validation
-- [ ] Add comprehensive rule engine
-- [ ] Enhance data quality schema
+- [ ] Implement structured address validation
+- [ ] Add ISO20022 address validation
+- [ ] Enhance data quality schema implementation
 - [ ] Add configuration management
+- [ ] Integrate protovalidate-go with main validator
 
 ### Phase 3: Advanced Features
 - [ ] SQS source implementation
@@ -380,7 +442,7 @@ validation_service:
 
 ### Phase 4: Production Readiness
 - [ ] Comprehensive testing
-- [ ] Documentation
+- [ ] Documentation alignment
 - [ ] Deployment automation
 - [ ] Monitoring and alerting
 
