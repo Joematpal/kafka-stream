@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"buf.build/go/protovalidate"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -79,6 +80,21 @@ func main() {
 		fmt.Printf("Validation failed: %v\n", err)
 	} else {
 		fmt.Println("Validation passed!")
+	}
+
+	// Example 3: Load message from JSON
+	fmt.Println("\n=== Example 3: Loading message from JSON ===")
+
+	// First, we need a descriptor (same as before)
+	fd2, err := loadDescriptorFromFile("descriptors.binpb")
+	if err != nil {
+		log.Printf("Failed to load descriptor (skipping JSON example): %v\n", err)
+	} else {
+		// Load and validate a message from JSON
+		err = loadAndValidateFromJSON(fd2, "user.json")
+		if err != nil {
+			log.Printf("JSON example failed: %v\n", err)
+		}
 	}
 }
 
@@ -156,6 +172,69 @@ func loadDescriptorFromFile(filename string) (protoreflect.FileDescriptor, error
 	}
 
 	return fd, nil
+}
+
+// loadMessageFromJSON loads a protobuf message from a JSON file
+func loadMessageFromJSON(fd protoreflect.FileDescriptor, messageName string, jsonFile string) (proto.Message, error) {
+	// Read the JSON file
+	jsonData, err := os.ReadFile(jsonFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read JSON file: %w", err)
+	}
+
+	// Get the message descriptor
+	msgDesc := fd.Messages().ByName(protoreflect.Name(messageName))
+	if msgDesc == nil {
+		return nil, fmt.Errorf("message %s not found in descriptor", messageName)
+	}
+
+	// Create a new dynamic message
+	msg := dynamicpb.NewMessage(msgDesc)
+
+	// Unmarshal JSON into the protobuf message
+	if err := protojson.Unmarshal(jsonData, msg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
+	}
+
+	return msg, nil
+}
+
+// loadAndValidateFromJSON demonstrates loading a message from JSON and validating it
+func loadAndValidateFromJSON(fd protoreflect.FileDescriptor, jsonFile string) error {
+	// Load the message from JSON
+	msg, err := loadMessageFromJSON(fd, "User", jsonFile)
+	if err != nil {
+		return fmt.Errorf("failed to load message from JSON: %w", err)
+	}
+
+	// Create validator
+	validator, err := protovalidate.New()
+	if err != nil {
+		return fmt.Errorf("failed to create validator: %w", err)
+	}
+
+	// Validate the message
+	if err := validator.Validate(msg); err != nil {
+		fmt.Printf("JSON message validation failed: %v\n", err)
+		return err
+	}
+
+	fmt.Println("JSON message validation passed!")
+
+	// Optional: Print the loaded message
+	fmt.Printf("Loaded message: %v\n", msg)
+
+	return nil
+}
+
+// createSampleJSONFile creates a sample JSON file for testing
+func createSampleJSONFile(filename string) error {
+	jsonContent := `{
+	 "email": "user@example.com",
+	 "age": 30
+}`
+
+	return os.WriteFile(filename, []byte(jsonContent), 0644)
 }
 
 // HOW IT WORKS TOGETHER:
